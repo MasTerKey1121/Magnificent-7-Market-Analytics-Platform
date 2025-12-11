@@ -3,15 +3,17 @@ from minio import Minio
 from io import BytesIO
 import os
 import time
+from sklearn.linear_model import LinearRegression
+from datetime import timedelta
 
 # --- CONFIG ---
-# เราจะตั้งค่า Connection เหมือนเดิม
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'localhost:9000')
 ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'admin')
 SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'password')
 
-SOURCE_BUCKET = "stock-data"       # ถังข้อมูลดิบ
-DEST_BUCKET = "processed-data"     # ถังข้อมูลที่ปรุงเสร็จแล้ว
+SOURCE_BUCKET = "stock-data"       
+DEST_BUCKET = "processed-data"     
+PREDICT_BUCKET = "predictions"     
 
 def get_minio_client():
     return Minio(
@@ -21,70 +23,107 @@ def get_minio_client():
         secure=False
     )
 
-def transform_stock_data():
-    print("🍳 Starting Data Transformation...")
+def predict_future(df, years=5):
+    # 1. Data Preparation
+    df = df.copy() 
+    df['Date_Ordinal'] = df['Date'].map(pd.Timestamp.toordinal)
+    
+    X = df[['Date_Ordinal']]
+    y = df['Close']
+
+    model = LinearRegression()
+    model.fit(X, y)
+    
+    # 3. Create future dates
+    last_date = df['Date'].max()
+    future_days = years * 365
+    future_dates = [last_date + timedelta(days=x) for x in range(1, future_days + 1)]
+    
+    future_df = pd.DataFrame({'Date': future_dates})
+    future_df['Date_Ordinal'] = future_df['Date'].map(pd.Timestamp.toordinal)
+    
+    # 4. predict
+    future_df['Predicted_Price'] = model.predict(future_df[['Date_Ordinal']])
+    
+
+    del future_df['Date_Ordinal']
+    
+    return future_df, model.coef_[0]
+
+def transform_and_predict():
+    print("🍳 Starting Data Pipeline...")
     client = get_minio_client()
     
-    # 1. สร้างถังปลายทางถ้ายังไม่มี
-    if not client.bucket_exists(DEST_BUCKET):
-        client.make_bucket(DEST_BUCKET)
-        print(f"📦 Created bucket: {DEST_BUCKET}")
-
-    # 2. หาไฟล์ทั้งหมดในถัง Raw (List Objects)
-    # หมายเหตุ: recursive=True เพื่อหาในโฟลเดอร์ย่อยๆ ด้วย
+    for bucket in [DEST_BUCKET, PREDICT_BUCKET]:
+        if not client.bucket_exists(bucket):
+            client.make_bucket(bucket)
+            print(f"Created bucket: {bucket}")
     objects = client.list_objects(SOURCE_BUCKET, recursive=True)
     
+
     for obj in objects:
         if not obj.object_name.endswith('.csv'):
             continue
             
-        print(f"🔄 Processing: {obj.object_name}")
+        print(f"\nProcessing: {obj.object_name}")
         
         try:
-            # 3. EXTRACT: อ่านไฟล์จาก MinIO
+            # --- EXTRACT ---
             response = client.get_object(SOURCE_BUCKET, obj.object_name)
             df = pd.read_csv(response)
             response.close()
             
-            # 4. TRANSFORM: คำนวณตัวเลขทางการเงิน
-            # เรียงข้อมูลตามวันที่ก่อนคำนวณ
+            # --- TRANSFORM ---
             df['Date'] = pd.to_datetime(df['Date'])
             df = df.sort_values('Date')
             
-            # คำนวณ Moving Average (เส้นค่าเฉลี่ย)
             df['SMA_20'] = df['Close'].rolling(window=20).mean()
             df['SMA_50'] = df['Close'].rolling(window=50).mean()
-            
-            # คำนวณ Daily Return (%)
             df['Daily_Return_Pct'] = df['Close'].pct_change() * 100
-            
-            # คำนวณความผันผวน (Volatility) 20 วัน
             df['Volatility_20'] = df['Close'].rolling(window=20).std()
             
-            # ตัดแถวที่มีค่าว่าง (NaN) ช่วงแรกๆ ทิ้ง
             df.dropna(inplace=True)
             
-            # 5. LOAD: ส่งขึ้นถังใหม่ (Processed)
-            # เราจะเก็บชื่อไฟล์เดิม แต่เปลี่ยน Bucket
-            # แปลง DataFrame กลับเป็น CSV Bytes
+            # --- LOAD (Processed Data) ---
             csv_buffer = BytesIO()
             df.to_csv(csv_buffer, index=False)
             csv_buffer.seek(0)
             
-            # Upload
             client.put_object(
                 DEST_BUCKET,
-                obj.object_name, # ใช้ชื่อ path เดิม เพื่อคงโครงสร้างโฟลเดอร์ไว้
+                obj.object_name,
                 csv_buffer,
                 length=len(csv_buffer.getvalue()),
                 content_type='application/csv'
             )
-            print(f"✅ Saved to: {DEST_BUCKET}/{obj.object_name}")
+            print(f"Saved processed data")
+
+            # PREDICT
+            future_df, slope = predict_future(df)
+            
+            # ตีความความชัน (Slope) ง่ายๆ
+            trend = "Uptrend " if slope > 0 else "Downtrend "
+            print(f"  Prediction ({trend}): Slope = {slope:.4f}")
+
+            # --- LOAD (Prediction Data) ---
+            pred_buffer = BytesIO()
+            future_df.to_csv(pred_buffer, index=False)
+            pred_buffer.seek(0)
+
+            pred_filename = obj.object_name.replace('.csv', '_prediction.csv')
+            
+            client.put_object(
+                PREDICT_BUCKET,
+                pred_filename,
+                pred_buffer,
+                length=len(pred_buffer.getvalue()),
+                content_type='application/csv'
+            )
+            print(f"Saved prediction to: {pred_filename}")
             
         except Exception as e:
-            print(f"❌ Error processing {obj.object_name}: {e}")
+            print(f"Error: {e}")
 
 if __name__ == "__main__":
-    # รอให้ MinIO พร้อม (เผื่อรันพร้อมกัน)
-    time.sleep(5)
-    transform_stock_data()
+    time.sleep(2)
+    transform_and_predict()

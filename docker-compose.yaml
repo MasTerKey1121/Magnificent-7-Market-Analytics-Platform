@@ -26,19 +26,17 @@ services:
       MINIO_ACCESS_KEY: "admin"
       MINIO_SECRET_KEY: "password"
       BUCKET_NAME: "stock-data"
-    # (Optional) ถ้าไม่อยากให้ ingestor รันซ้ำตอนเทส transformer ให้ comment บรรทัด command นี้ออกได้
     # command: ["python", "ingest_data.py"] 
 
-  # --- เพิ่มส่วนนี้เข้ามา ---
+
   transformer:
     build: .
     container_name: stock-transformer
     depends_on:
       - minio
-      - ingestor # รอให้ดึงของเสร็จก่อน ค่อยปรุง
+      - ingestor 
     environment:
       MINIO_ENDPOINT: "minio:9000"
       MINIO_ACCESS_KEY: "admin"
       MINIO_SECRET_KEY: "password"
-    # สั่งให้รันไฟล์ transform_data.py แทน
     command: ["python", "transform_data.py"]
