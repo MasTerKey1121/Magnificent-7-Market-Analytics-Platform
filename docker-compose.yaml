@@ -1,6 +1,27 @@
 version: '3.8'
 
+x-airflow-common:
+  &airflow-common
+  build: .
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    MINIO_ENDPOINT: "http://minio:9000"
+    MINIO_ACCESS_KEY: "masterkey11"
+    MINIO_SECRET_KEY: "123456789"
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+  depends_on:
+    - postgres
+
 services:
+  # --- 1. MINIO SERVICE ---
   minio:
     image: minio/minio
     container_name: local-datalake
@@ -8,35 +29,86 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: "admin"
-      MINIO_ROOT_PASSWORD: "password"
+      MINIO_ROOT_USER: "masterkey11"
+      MINIO_ROOT_PASSWORD: "123456789"
     command: server /data --console-address ":9001"
     volumes:
       - ./minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
 
-  ingestor:
-    build: .
-    container_name: stock-ingestor
+  # --- 2. DATABASE ---
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+
+  # --- 3. AIRFLOW WEBSERVER ---
+  airflow-webserver:
+    <<: *airflow-common
+    command: airflow webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      - airflow-init
+
+  # --- 4. AIRFLOW SCHEDULER ---
+  airflow-scheduler:
+    <<: *airflow-common
+    command: airflow scheduler
+    depends_on:
+      - airflow-init
+
+  # --- 5. AIRFLOW INIT ---
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /sources/logs /sources/dags /sources/plugins
+        chown -R airflow: /sources/logs /sources/dags /sources/plugins
+        airflow db migrate
+        airflow users create \
+          --username masterkey11 \
+          --password 123456789 \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email banchpolch21@gmail.com
+    environment:
+      <<: *airflow-common-env
+    depends_on:
+      - postgres
+
+  # ---  STREAMLIT DASHBOARD ---
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: stock-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      MINIO_ENDPOINT: "http://minio:9000"
+      MINIO_ACCESS_KEY: "masterkey11"
+      MINIO_SECRET_KEY: "123456789"
     depends_on:
       - minio
     volumes:
-      - ./data:/app/data
-    environment:
-      MINIO_ENDPOINT: "minio:9000"
-      MINIO_ACCESS_KEY: "admin"
-      MINIO_SECRET_KEY: "password"
-      BUCKET_NAME: "stock-data"
-    command: ["python", "ingest_data.py"] 
+      - ./dashboard.py:/app/dashboard.py
 
-
-  transformer:
-    build: .
-    container_name: stock-transformer
-    depends_on:
-      - minio
-      - ingestor 
-    environment:
-      MINIO_ENDPOINT: "minio:9000"
-      MINIO_ACCESS_KEY: "admin"
-      MINIO_SECRET_KEY: "password"
-    command: ["python", "transform_data.py"]
+volumes:
+  postgres-db-volume:

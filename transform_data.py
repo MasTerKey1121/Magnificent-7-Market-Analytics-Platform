@@ -8,8 +8,8 @@ from datetime import timedelta
 
 # --- CONFIG ---
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'localhost:9000')
-ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'admin')
-SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'password')
+ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'masterkey11')
+SECRET_KEY = os.getenv('MINIO_SECRET_KEY', '123456789')
 
 SOURCE_BUCKET = "stock-data"       
 DEST_BUCKET = "processed-data"     

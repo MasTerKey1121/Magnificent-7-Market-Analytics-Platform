@@ -1,12 +1,4 @@
-FROM python:3.9-slim
-
-WORKDIR /app
-
+FROM apache/airflow:2.10.2
+USER airflow
 COPY requirements.txt .
-
 RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-
-CMD ["python", "ingest_data.py"]

@@ -12,8 +12,8 @@ BUCKET_NAME = os.getenv('BUCKET_NAME', 'stock-data')
 
 
 MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'localhost:9000')
-ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'admin')
-SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'password')
+ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'masterkey11')
+SECRET_KEY = os.getenv('MINIO_SECRET_KEY', '123456789')
 
 def get_minio_client():
     time.sleep(5) 
@@ -48,8 +48,6 @@ def fetch_and_upload():
     
     data = yf.download(TICKERS, period="5y", group_by='ticker')
 
-    if client.bucket_exists(BUCKET_NAME):
-        old_data = client.list_objects(BUCKET_NAME, prefix=f"raw_data/{today_str}/", recursive=True)
 
     for ticker in TICKERS:
         try:

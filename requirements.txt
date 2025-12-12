@@ -1,6 +1,7 @@
+apache-airflow
 pandas
 yfinance
+s3fs
 minio
-streamlit
+scikit-learn
 plotly
-scikit-learn 
