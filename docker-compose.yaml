@@ -26,7 +26,7 @@ services:
       MINIO_ACCESS_KEY: "admin"
       MINIO_SECRET_KEY: "password"
       BUCKET_NAME: "stock-data"
-    # command: ["python", "ingest_data.py"] 
+    command: ["python", "ingest_data.py"] 
 
 
   transformer:

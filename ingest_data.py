@@ -46,8 +46,11 @@ def fetch_and_upload():
     client = get_minio_client()
     today_str = datetime.now().strftime('%Y-%m-%d')
     
-    data = yf.download(TICKERS, period="1y", group_by='ticker')
-    
+    data = yf.download(TICKERS, period="5y", group_by='ticker')
+
+    if client.bucket_exists(BUCKET_NAME):
+        old_data = client.list_objects(BUCKET_NAME, prefix=f"raw_data/{today_str}/", recursive=True)
+
     for ticker in TICKERS:
         try:
             df = data[ticker].copy()
